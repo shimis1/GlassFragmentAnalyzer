@@ -332,18 +332,64 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         bg.draw(frame)
         val cam = frame.camera
         if (cam.trackingState != TrackingState.TRACKING) {
-            overlay.set(null, "Lėtai pajudinkite telefoną"); return
+            overlay.set(null, "Lėtai pajudinkite telefoną į šonus"); return
         }
+        val camPos = cam.pose.translation
+        val camZ = norm(cam.pose.zAxis)
+        val fwd = mul(camZ, -1f)
+        // glass lying flat: use world up when the phone looks down, otherwise face the camera
+        val fallbackN = if (abs(camZ[1]) > 0.7f) floatArrayOf(0f, 1f, 0f) else camZ
+
+        // 1) depth of tracked feature points (crack lines) near the screen centre
+        var pcDepth = -1f
+        run {
+            val view0 = FloatArray(16); val proj0 = FloatArray(16); val vp0 = FloatArray(16)
+            cam.getViewMatrix(view0, 0); cam.getProjectionMatrix(proj0, 0, 0.01f, 100f)
+            android.opengl.Matrix.multiplyMM(vp0, 0, proj0, 0, view0, 0)
+            val depths = ArrayList<Float>()
+            try {
+                val pc = frame.acquirePointCloud()
+                try {
+                    val b = pc.points
+                    val cnt = b.remaining() / 4
+                    val r = minOf(viewW, viewH) * 0.3f
+                    for (i in 0 until cnt) {
+                        val x = b.get(i * 4); val y = b.get(i * 4 + 1); val z = b.get(i * 4 + 2); val conf = b.get(i * 4 + 3)
+                        if (conf < 0.1f) continue
+                        val sp = project(vp0, floatArrayOf(x, y, z)) ?: continue
+                        if (abs(sp[0] - viewW / 2f) > r || abs(sp[1] - viewH / 2f) > r) continue
+                        val d = dot(sub(floatArrayOf(x, y, z), camPos), fwd)
+                        if (d > 0.05f && d < 1.5f) depths.add(d)
+                    }
+                } finally { pc.release() }
+            } catch (_: Exception) {}
+            if (depths.size >= 4) { depths.sort(); pcDepth = depths[depths.size / 2] }
+        }
+
+        // 2) ARCore hit (plane / depth) at the screen centre
         val hit = frame.hitTest(viewW / 2f, viewH / 2f).firstOrNull {
             val t = it.trackable
             (t is Plane && t.isPoseInPolygon(it.hitPose)) || t is DepthPoint ||
                     (t is Point && t.orientationMode == Point.OrientationMode.ESTIMATED_SURFACE_NORMAL)
-        }
-        if (hit == null) { overlay.set(null, "Nukreipkite į stiklą, ieškomas paviršius"); return }
+        }?.takeIf { it.distance in 0.05f..1.5f }
+        val hitDepth = hit?.let { dot(sub(it.hitPose.translation, camPos), fwd) } ?: -1f
 
-        val pose = hit.hitPose
-        val c = pose.translation
-        val n = norm(pose.yAxis)
+        var c: FloatArray? = null
+        var n = fallbackN
+        var approx = false
+        if (hit != null && (pcDepth < 0 || abs(hitDepth - pcDepth) < 0.25f * pcDepth)) {
+            c = hit.hitPose.translation
+            n = norm(hit.hitPose.yAxis)
+        } else if (pcDepth > 0) {
+            // centre of the surface plane (normal n) that passes through the median point depth
+            val cosA = abs(dot(fwd, n)).coerceAtLeast(0.3f)
+            val along = pcDepth / cosA
+            c = floatArrayOf(camPos[0] + fwd[0] * along, camPos[1] + fwd[1] * along, camPos[2] + fwd[2] * along)
+            approx = true
+        }
+        if (c == null) { overlay.set(null, "Lėtai pajudinkite telefoną į šonus virš stiklo"); return }
+        val dist = sqrt(dot(sub(c, camPos), sub(c, camPos)))
+
         val camX = cam.pose.xAxis
         val u = norm(sub(camX, mul(n, dot(camX, n))))
         val v = norm(cross(n, u))
@@ -362,9 +408,13 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             innerS[k * 2] = inner[idx[k]]!![0]; innerS[k * 2 + 1] = inner[idx[k]]!![1]
             outerS[k * 2] = outer[idx[k]]!![0]; outerS[k * 2 + 1] = outer[idx[k]]!![1]
         }
-        val tilt = abs(dot(norm(cam.pose.zAxis), n))
-        val cm = String.format(Locale.US, "%.0f", hit.distance * 100)
-        overlay.set(innerS, if (tilt < 0.9f) "Laikykite telefoną tiesiau · $cm cm" else "Rėmelis 50×50 mm · $cm cm")
+        val tilt = abs(dot(camZ, n))
+        val cm = String.format(Locale.US, "%.0f", dist * 100)
+        overlay.set(innerS, when {
+            tilt < 0.9f -> "Laikykite telefoną tiesiau · $cm cm"
+            approx -> "50×50 mm · $cm cm · taškai"
+            else -> "50×50 mm · $cm cm · ${hit?.trackable?.javaClass?.simpleName ?: ""}"
+        })
 
         if (captureRequested) capture(frame, outerS)
     }
