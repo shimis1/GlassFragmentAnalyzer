@@ -10,13 +10,22 @@ android {
         applicationId = "lt.skeveldros"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 5
+        versionName = "1.5"
+    }
+    signingConfigs {
+        create("fixed") {
+            storeFile = file("skeveldros.jks")
+            storePassword = "skeveldros"
+            keyAlias = "skeveldros"
+            keyPassword = "skeveldros"
+        }
     }
     buildTypes {
+        debug { signingConfig = signingConfigs.getByName("fixed") }
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("fixed")
         }
     }
     compileOptions {
