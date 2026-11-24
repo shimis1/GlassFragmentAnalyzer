@@ -74,6 +74,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     @Volatile private var captureRequested = false
     @Volatile private var inResult = false
     private val depthHist = ArrayDeque<Float>()
+    private var lastDetect = 0L
 
     private lateinit var gl: GLSurfaceView
     private lateinit var overlay: OverlayView
@@ -119,7 +120,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         arLayer.addView(overlay, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         val shot = button("Fiksuoti kadrą", primary = true) {
             if (overlay.hasFrame) captureRequested = true
-            else toast("Palaukite, kol atsiras geltonas rėmelis")
+            else toast("Trafaretas dar nerastas")
         }
         shot.textSize = 20f
         arLayer.addView(shot, FrameLayout.LayoutParams(MATCH_PARENT, dp(68), Gravity.BOTTOM).apply {
@@ -275,10 +276,9 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
                         ?.takeIf { it.imageSize != def.imageSize }?.let { s.cameraConfig = it }
                 } catch (_: Exception) {}
                 val cfg = Config(s)
-                cfg.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
+                cfg.planeFindingMode = Config.PlaneFindingMode.DISABLED
                 cfg.focusMode = Config.FocusMode.AUTO
                 cfg.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-                if (s.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) cfg.depthMode = Config.DepthMode.AUTOMATIC
                 s.configure(cfg)
                 session = s
                 geomDirty = true
@@ -334,114 +334,57 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         s.setCameraTextureName(bg.textureId)
         val frame = try { s.update() } catch (e: Exception) { return }
         bg.draw(frame)
-        val cam = frame.camera
-        if (cam.trackingState != TrackingState.TRACKING) {
-            overlay.set(null, "Lėtai pajudinkite telefoną į šonus"); return
-        }
-        val camPos = cam.pose.translation
-        val camZ = norm(cam.pose.zAxis)
-        val fwd = mul(camZ, -1f)
-        // glass lying flat: use world up when the phone looks down, otherwise face the camera
-        val fallbackN = if (abs(camZ[1]) > 0.7f) floatArrayOf(0f, 1f, 0f) else camZ
-
-        // 1) depth of tracked feature points (crack lines) near the screen centre
-        var pcDepth = -1f
-        run {
-            val view0 = FloatArray(16); val proj0 = FloatArray(16); val vp0 = FloatArray(16)
-            cam.getViewMatrix(view0, 0); cam.getProjectionMatrix(proj0, 0, 0.01f, 100f)
-            android.opengl.Matrix.multiplyMM(vp0, 0, proj0, 0, view0, 0)
-            val depths = ArrayList<Float>()
-            try {
-                val pc = frame.acquirePointCloud()
-                try {
-                    val b = pc.points
-                    val cnt = b.remaining() / 4
-                    val r = minOf(viewW, viewH) * 0.3f
-                    for (i in 0 until cnt) {
-                        val x = b.get(i * 4); val y = b.get(i * 4 + 1); val z = b.get(i * 4 + 2); val conf = b.get(i * 4 + 3)
-                        if (conf < 0.1f) continue
-                        val sp = project(vp0, floatArrayOf(x, y, z)) ?: continue
-                        if (abs(sp[0] - viewW / 2f) > r || abs(sp[1] - viewH / 2f) > r) continue
-                        val d = dot(sub(floatArrayOf(x, y, z), camPos), fwd)
-                        if (d > 0.05f && d < 1.5f) depths.add(d)
-                    }
-                } finally { pc.release() }
-            } catch (_: Exception) {}
-            if (depths.size >= 4) { depths.sort(); pcDepth = depths[depths.size / 2] }
-        }
-
-        // 2) ARCore hit (plane / depth) at the screen centre
-        val hit = frame.hitTest(viewW / 2f, viewH / 2f).firstOrNull {
-            val t = it.trackable
-            (t is Plane && t.isPoseInPolygon(it.hitPose)) || t is DepthPoint ||
-                    (t is Point && t.orientationMode == Point.OrientationMode.ESTIMATED_SURFACE_NORMAL)
-        }?.takeIf { it.distance in 0.05f..1.5f }
-        val hitDepth = hit?.let { dot(sub(it.hitPose.translation, camPos), fwd) } ?: -1f
-
-        var n = fallbackN
-        var approx = false
-        var along = -1f
-        if (hit != null && (pcDepth < 0 || abs(hitDepth - pcDepth) < 0.25f * pcDepth)) {
-            n = norm(hit.hitPose.yAxis)
-            along = hitDepth / abs(dot(fwd, n)).coerceAtLeast(0.3f)
-        } else if (pcDepth > 0) {
-            along = pcDepth / abs(dot(fwd, n)).coerceAtLeast(0.3f)
-            approx = true
-        }
-        if (along in 0.06f..0.8f) { depthHist.addLast(along); if (depthHist.size > 20) depthHist.removeFirst() }
-        if (depthHist.size < 5) { overlay.set(null, "Lėtai pajudinkite telefoną į šonus virš stiklo"); return }
-        val sorted = depthHist.sorted()
-        val med = sorted[sorted.size / 2]
-        val spread = (sorted[sorted.size * 3 / 4] - sorted[sorted.size / 4]) / med
-        val c = floatArrayOf(camPos[0] + fwd[0] * med, camPos[1] + fwd[1] * med, camPos[2] + fwd[2] * med)
-        val dist = med
-        val unstable = spread > 0.15f
-
-        val camX = cam.pose.xAxis
-        val u = norm(sub(camX, mul(n, dot(camX, n))))
-        val v = norm(cross(n, u))
-
-        val view = FloatArray(16); val proj = FloatArray(16); val vp = FloatArray(16)
-        cam.getViewMatrix(view, 0)
-        cam.getProjectionMatrix(proj, 0, 0.01f, 100f)
-        android.opengl.Matrix.multiplyMM(vp, 0, proj, 0, view, 0)
-
-        val inner = square(c, u, v, HALF_IN).map { project(vp, it) }
-        val outer = square(c, u, v, HALF_OUT).map { project(vp, it) }
-        if (inner.any { it == null } || outer.any { it == null }) { overlay.set(null, "Atitraukite telefoną"); return }
-        val idx = order(inner.map { it!! })
-        val innerS = FloatArray(8); val outerS = FloatArray(8)
-        for (k in 0..3) {
-            innerS[k * 2] = inner[idx[k]]!![0]; innerS[k * 2 + 1] = inner[idx[k]]!![1]
-            outerS[k * 2] = outer[idx[k]]!![0]; outerS[k * 2 + 1] = outer[idx[k]]!![1]
-        }
-        val tilt = abs(dot(camZ, n))
-        val cm = String.format(Locale.US, "%.0f", dist * 100)
-        overlay.set(innerS, when {
-            unstable -> "Matuojama… · $cm cm"
-            tilt < 0.9f -> "Laikykite telefoną tiesiau · $cm cm"
-            approx -> "50×50 mm · $cm cm · taškai"
-            else -> "50×50 mm · $cm cm · ${hit?.trackable?.javaClass?.simpleName ?: ""}"
-        })
-
-        if (captureRequested) capture(frame, outerS)
+        val now = System.currentTimeMillis()
+        if (now - lastDetect < 120 && !captureRequested) return
+        lastDetect = now
+        val img = try { frame.acquireCameraImage() } catch (e: Exception) { return }
+        try {
+            val k = maxOf(1, (img.width + 479) / 480)
+            val sw = img.width / k; val sh = img.height / k
+            val small = downscaleY(img, k, sw, sh)
+            val q = TemplateFinder.find(small, sw, sh)
+            if (q == null) {
+                overlay.set(null, "Nukreipkite į trafaretą (15–30 cm)")
+                if (captureRequested) { captureRequested = false; toast("Trafaretas nerastas") }
+                return
+            }
+            val outerImg = FloatArray(8) { q[it] * k + k / 2f }
+            val outerView = FloatArray(8)
+            frame.transformCoordinates2d(Coordinates2d.IMAGE_PIXELS, outerImg, Coordinates2d.VIEW, outerView)
+            val idx = order((0..3).map { floatArrayOf(outerView[it * 2], outerView[it * 2 + 1]) })
+            val oV = FloatArray(8); val oI = FloatArray(8)
+            for (j in 0..3) {
+                oV[j * 2] = outerView[idx[j] * 2]; oV[j * 2 + 1] = outerView[idx[j] * 2 + 1]
+                oI[j * 2] = outerImg[idx[j] * 2]; oI[j * 2 + 1] = outerImg[idx[j] * 2 + 1]
+            }
+            val m = Matrix()
+            m.setPolyToPoly(floatArrayOf(0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f), 0, oV, 0, 4)
+            val a1 = 1f / 7f; val a6 = 6f / 7f
+            val innerV = floatArrayOf(a1, a1, a6, a1, a6, a6, a1, a6)
+            m.mapPoints(innerV)
+            overlay.set(innerV, "Trafaretas rastas · 50×50 mm")
+            if (captureRequested) {
+                captureRequested = false
+                val src = yToBitmap(img)
+                val out = Bitmap.createBitmap(S, S, Bitmap.Config.ARGB_8888)
+                val o = (M - 10 * N / 50).toFloat(); val e = o + 70 * N / 50f
+                val wm = Matrix()
+                wm.setPolyToPoly(oI, 0, floatArrayOf(o, o, e, o, e, e, o, e), 0, 4)
+                Canvas(out).drawBitmap(src, wm, Paint(Paint.FILTER_BITMAP_FLAG))
+                src.recycle()
+                runOnUiThread { showResult(out) }
+            }
+        } finally { img.close() }
     }
 
-    private fun capture(frame: Frame, outerView: FloatArray) {
-        val img = try { frame.acquireCameraImage() } catch (e: NotYetAvailableException) { return } catch (e: Exception) {
-            captureRequested = false; toast("Nepavyko gauti kadro"); return
+    private fun downscaleY(img: Image, k: Int, sw: Int, sh: Int): IntArray {
+        val pl = img.planes[0]; val buf = pl.buffer; val rs = pl.rowStride; val ps = pl.pixelStride
+        val out = IntArray(sw * sh)
+        for (y in 0 until sh) {
+            val row = (y * k + k / 2) * rs
+            for (x in 0 until sw) out[y * sw + x] = buf.get(row + (x * k + k / 2) * ps).toInt() and 255
         }
-        captureRequested = false
-        val src: Bitmap
-        try { src = yToBitmap(img) } finally { img.close() }
-        val imgPts = FloatArray(8)
-        frame.transformCoordinates2d(Coordinates2d.VIEW, outerView, Coordinates2d.IMAGE_PIXELS, imgPts)
-        val out = Bitmap.createBitmap(S, S, Bitmap.Config.ARGB_8888)
-        val m = Matrix()
-        m.setPolyToPoly(imgPts, 0, floatArrayOf(0f, 0f, S.toFloat(), 0f, S.toFloat(), S.toFloat(), 0f, S.toFloat()), 0, 4)
-        Canvas(out).drawBitmap(src, m, Paint(Paint.FILTER_BITMAP_FLAG))
-        src.recycle()
-        runOnUiThread { showResult(out) }
+        return out
     }
 
     private fun yToBitmap(img: Image): Bitmap {
@@ -516,8 +459,8 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         val sensP = 4 + sens.progress; val mm = minMm(); val p = pol.selectedItemPosition
         details.text = "Skaičiuojama…"
         Thread {
-            val r = Counter.count(g, S, M, N, sensP, mm, p)
-            val px = IntArray(S * S) { if (r.edges[it]) 0xFFFF2840.toInt() else 0 }
+            val r = Counter.count(g, S, M, N, sensP, mm, p, true)
+            val px = IntArray(S * S) { val x = it % S; val y = it / S; if (r.edges[it] && x >= M && x < M + N && y >= M && y < M + N) 0xFFFF2840.toInt() else 0 }
             val eb = Bitmap.createBitmap(px, S, S, Bitmap.Config.ARGB_8888)
             runOnUiThread {
                 coverage = r.coverage

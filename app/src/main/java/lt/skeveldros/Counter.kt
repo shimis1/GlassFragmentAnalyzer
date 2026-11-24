@@ -53,7 +53,7 @@ object Counter {
         return o
     }
 
-    fun count(gr: FloatArray, size: Int, roi0: Int, n: Int, sensPct: Int, minMm: Float, pol: Int): CountResult {
+    fun count(gr: FloatArray, size: Int, roi0: Int, n: Int, sensPct: Int, minMm: Float, pol: Int, maskOutside: Boolean = false): CountResult {
         val W = size; val H = size; val total = W * H
         val pm = n / 50f
         val sm = boxBlur(gr, W, H, 1)
@@ -98,6 +98,10 @@ object Counter {
         }
         var cov = E.count { it }
         if (cov < total * p * .35f) { E0.copyInto(E); cov = E.count { it } }
+        if (maskOutside) for (i in 0 until total) {
+            val x = i % W; val y = i / W
+            if (x < roi0 || y < roi0 || x >= roi0 + n || y >= roi0 + n) E[i] = true
+        }
 
         // chamfer distance to nearest crack
         val big = 1e6f
@@ -162,8 +166,8 @@ object Counter {
             var w = 0f
             if (inside) {
                 val db = minOf(x - r0, r1 - x, y - r0, r1 - y)
-                w = if (db < v * .8f) .5f else 1f
-            } else {
+                w = if (db < v * (if (maskOutside) 1.15f else .8f)) .5f else 1f
+            } else if (!maskOutside) {
                 val ox = maxOf(r0 - x, 0f, x - r1); val oy = maxOf(r0 - y, 0f, y - r1)
                 if (hypot(ox, oy) < v * .6f) w = .5f
             }
