@@ -73,6 +73,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     @Volatile private var geomDirty = true
     @Volatile private var captureRequested = false
     @Volatile private var inResult = false
+    private val depthHist = ArrayDeque<Float>()
 
     private lateinit var gl: GLSurfaceView
     private lateinit var overlay: OverlayView
@@ -374,21 +375,24 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         }?.takeIf { it.distance in 0.05f..1.5f }
         val hitDepth = hit?.let { dot(sub(it.hitPose.translation, camPos), fwd) } ?: -1f
 
-        var c: FloatArray? = null
         var n = fallbackN
         var approx = false
+        var along = -1f
         if (hit != null && (pcDepth < 0 || abs(hitDepth - pcDepth) < 0.25f * pcDepth)) {
-            c = hit.hitPose.translation
             n = norm(hit.hitPose.yAxis)
+            along = hitDepth / abs(dot(fwd, n)).coerceAtLeast(0.3f)
         } else if (pcDepth > 0) {
-            // centre of the surface plane (normal n) that passes through the median point depth
-            val cosA = abs(dot(fwd, n)).coerceAtLeast(0.3f)
-            val along = pcDepth / cosA
-            c = floatArrayOf(camPos[0] + fwd[0] * along, camPos[1] + fwd[1] * along, camPos[2] + fwd[2] * along)
+            along = pcDepth / abs(dot(fwd, n)).coerceAtLeast(0.3f)
             approx = true
         }
-        if (c == null) { overlay.set(null, "Lėtai pajudinkite telefoną į šonus virš stiklo"); return }
-        val dist = sqrt(dot(sub(c, camPos), sub(c, camPos)))
+        if (along in 0.06f..0.8f) { depthHist.addLast(along); if (depthHist.size > 20) depthHist.removeFirst() }
+        if (depthHist.size < 5) { overlay.set(null, "Lėtai pajudinkite telefoną į šonus virš stiklo"); return }
+        val sorted = depthHist.sorted()
+        val med = sorted[sorted.size / 2]
+        val spread = (sorted[sorted.size * 3 / 4] - sorted[sorted.size / 4]) / med
+        val c = floatArrayOf(camPos[0] + fwd[0] * med, camPos[1] + fwd[1] * med, camPos[2] + fwd[2] * med)
+        val dist = med
+        val unstable = spread > 0.15f
 
         val camX = cam.pose.xAxis
         val u = norm(sub(camX, mul(n, dot(camX, n))))
@@ -411,6 +415,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         val tilt = abs(dot(camZ, n))
         val cm = String.format(Locale.US, "%.0f", dist * 100)
         overlay.set(innerS, when {
+            unstable -> "Matuojama… · $cm cm"
             tilt < 0.9f -> "Laikykite telefoną tiesiau · $cm cm"
             approx -> "50×50 mm · $cm cm · taškai"
             else -> "50×50 mm · $cm cm · ${hit?.trackable?.javaClass?.simpleName ?: ""}"
@@ -497,6 +502,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
 
     private fun backToCamera() {
         inResult = false
+        depthHist.clear()
         resultLayer.visibility = View.GONE
         arLayer.visibility = View.VISIBLE
         startAr()
