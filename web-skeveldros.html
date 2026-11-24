@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="lt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Skeveldrų skaičiuoklė</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+/* VOICE: plain shop-floor QC tool, fast, big targets, no decoration
+   IDEA: a test label stuck on a tempered glass sample
+   PICTURE: the live camera / photo with the 50x50 mm frame IS the picture
+   COLOUR and TYPE: white, black ink, safety yellow frame, emerald pass, red fail; Schibsted Grotesk
+   LAYOUT: one column: camera, big count + verdict, controls, history */
+:root{color-scheme:light dark;--bg:light-dark(#fff,#0f1217);--ink:light-dark(#10131a,#eef1f4);--mut:light-dark(#5b6270,#9aa3ae);--line:light-dark(#e3e6ea,#262b33);--card:light-dark(#f5f6f8,#171b22);--y:#ffc400;--ok:#00a86b;--bad:#c1121f}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Schibsted Grotesk",system-ui,sans-serif;overflow-x:clip}
+.wrap{max-width:760px;margin:0 auto;padding:16px max(4vw,12px) 48px}
+h1{font-size:26px;line-height:1.1;margin:4px 0 12px;font-weight:800}
+#stage{position:relative;background:#0b0d10;border-radius:14px;overflow:hidden;display:flex;justify-content:center;min-height:300px;align-items:center}
+#cv{display:block;touch-action:none;max-width:100%}
+#empty{color:#cfd5dc;text-align:center;padding:24px;display:grid;gap:14px;justify-items:center}
+#empty svg{width:min(220px,60vw);height:auto}
+body.has #empty{display:none}body:not(.has) #cv{display:none}
+.live{position:absolute;top:10px;left:10px;background:rgba(0,0,0,.65);color:#fff;border-radius:10px;padding:6px 12px;font-weight:800;font-size:22px;pointer-events:none;display:none}
+body.livemode .live{display:block}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
+button,.btn,select,input[type=text],input[type=number]{font:inherit;font-size:16px;min-height:44px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:0 14px}
+button,.btn{cursor:pointer;font-weight:600;display:inline-flex;align-items:center;justify-content:center}
+button:focus-visible,select:focus-visible,input:focus-visible,.btn:focus-within{outline:3px solid var(--y);outline-offset:2px}
+.pri{background:var(--y);color:#10131a;border-color:var(--y);font-weight:800}
+.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.grow{flex:1 1 140px}
+.btn input{position:absolute;opacity:0;width:1px;height:1px}
+.res{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;align-items:center;margin-top:14px;padding:14px 16px;border-radius:14px;background:var(--card)}
+#num{font-size:clamp(48px,14vw,72px);font-weight:800;line-height:1;font-variant-numeric:tabular-nums;grid-row:span 2}
+#verd{font-size:22px;font-weight:800;padding:6px 12px;border-radius:8px;justify-self:start}
+#verd.ok{background:var(--ok);color:#fff}#verd.bad{background:var(--bad);color:#fff}#verd.wait{background:var(--line)}
+#det{color:var(--mut);font-size:14px}
+label{display:flex;gap:8px;align-items:center}
+input[type=range]{flex:1;accent-color:var(--y);min-height:44px}
+input[type=checkbox]{width:22px;height:22px;accent-color:var(--ok)}
+.panel{display:none}body[data-m=roi] .p-roi,body[data-m=count] .p-count,body[data-m=cal] .p-cal,body[data-m=live] .p-live{display:block}
+.hint{color:var(--mut);font-size:14px;margin:8px 0 0}
+.leg i{display:inline-block;width:12px;height:12px;border-radius:50%;margin:0 4px 0 10px;vertical-align:-1px;border:1px solid #000}
+h2{font-size:19px;margin:28px 0 8px}
+table{width:100%;border-collapse:collapse;font-size:15px}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line)}
+td.n{text-align:right;font-variant-numeric:tabular-nums}
+.tag{font-weight:800}.tag.ok{color:var(--ok)}.tag.bad{color:var(--bad)}
+details{margin-top:24px;color:var(--mut);font-size:14px}
+summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:600;color:var(--ink)}
+#msg{color:var(--bad);font-size:14px;margin-top:8px}
+@media(max-width:600px){table{font-size:13px}.stack thead{display:none}.stack tr{display:grid;padding-block:10px}.stack td{display:flow-root;border:0;padding:3px 0;padding-inline-start:8em;text-align:start}.stack td::before{content:attr(data-l);float:inline-start;width:7.5em;margin-inline-start:-8em;white-space:normal}.stack td:empty{display:none}}
+@media(prefers-reduced-motion:no-preference){#verd{transition:background .2s}}
+</style><script>new MutationObserver(()=>{for(const c of document.querySelectorAll('.stack td:not([data-l])')){let i=0,p=c;while(p=p.previousElementSibling)i+=p.colSpan;c.dataset.l=c.closest('table').rows[0].cells[i]?.textContent||''}}).observe(document,{childList:true,subtree:true})</script></head>
+<body data-m="none">
+<div class="wrap">
+<h1>Skeveldrų skaičiuoklė</h1>
+
+<div id="stage">
+  <div id="empty">
+    <svg id="glass" viewBox="0 0 200 200" aria-hidden="true"></svg>
+    <div>Įjunkite kamerą ir nukreipkite ją į sudaužytą stiklą.<br>Geltoną rėmelį sulygiuokite su 50×50 mm trafaretu.</div>
+  </div>
+  <canvas id="cv"></canvas>
+  <div class="live" id="liveN">–</div>
+</div>
+<div id="msg" role="status"></div>
+
+<div class="row">
+  <button class="pri grow" id="bCam">Kamera</button>
+  <label class="btn grow">Nuotrauka<input type="file" id="file" accept="image/*" capture="environment"></label>
+  <label class="btn grow">Iš galerijos<input type="file" id="file2" accept="image/*"></label>
+</div>
+
+<div class="panel p-live">
+  <div class="row"><button class="pri grow" id="bShot" style="min-height:56px;font-size:18px">Fiksuoti kadrą</button><button id="bStop">Stabdyti</button></div>
+  <div class="row"><label class="grow">Rėmelis<input type="range" id="fsize" min="25" max="95" value="60"></label></div>
+  <p class="hint">Laikykite telefoną lygiagrečiai stiklui. Rėmelio dydį keiskite slankikliu, kol jis sutaps su 50×50 mm trafaretu ar nubrėžtu kvadratu.</p>
+</div>
+
+<div class="panel p-roi">
+  <div class="row"><button class="pri grow" id="bGo">Skaičiuoti</button><button id="bCal">Kalibruoti liniuote</button></div>
+  <p class="hint">Vilkite geltoną kvadratą, o kampu keiskite jo dydį, kol jis sutaps su 50×50 mm zona.</p>
+</div>
+
+<div class="panel p-cal">
+  <p class="hint">Bakstelėkite du taškus liniuotėje ir įveskite atstumą tarp jų.</p>
+  <div class="row"><input type="number" id="calmm" value="100" min="5" inputmode="decimal" style="width:110px"> mm <button class="pri" id="bCalOk">Taikyti</button><button id="bCalX">Atšaukti</button></div>
+</div>
+
+<div class="panel p-count">
+  <div class="row">
+    <button id="m1" class="on">+1</button><button id="m5">+½</button>
+    <button id="bUndo">Atšaukti</button><button id="bClr">Išvalyti</button><button id="bEdge" class="on">Linijos</button>
+  </div>
+  <div class="row"><label class="grow">Jautrumas<input type="range" id="sens" min="4" max="35" value="14"></label><button id="bAuto">Perskaičiuoti</button></div>
+  <div class="row"><label class="grow">Min. skeveldra<input type="range" id="fmin" min="2" max="12" step=".5" value="4"></label><span id="fminv">4 mm</span></div>
+  <div class="row"><label>Įtrūkimai <select id="pol"><option value="b">šviesūs</option><option value="d">tamsūs</option><option value="a">abu</option></select></label></div>
+  <div class="row"><button id="bBack">Keisti kvadratą</button></div>
+  <p class="hint leg">Bakstelėkite skeveldrą, kad pridėtumėte; bakstelėkite tašką, kad ištrintumėte.<i style="background:#00c27a"></i>1<i style="background:#ffc400"></i>½ (kerta kraštą)</p>
+</div>
+
+<div class="res">
+  <div id="num">–</div>
+  <div id="verd" class="wait">Laukiama</div>
+  <div id="det">Min. 40 (4–12 mm)</div>
+</div>
+
+<div class="row">
+  <label>Storis <select id="th"></select></label>
+  <input type="text" id="ord" placeholder="Užsakymo nr." class="grow">
+</div>
+<div class="row"><label><input type="checkbox" id="len"> Ilgiausia skeveldra ≤ 100 mm</label></div>
+<div class="row"><button class="pri grow" id="bSave">Išsaugoti rezultatą</button></div>
+
+<h2>Istorija</h2>
+<div id="hist"></div>
+<div class="row"><button id="bCopy">Kopijuoti CSV</button><button id="bDel">Ištrinti istoriją</button></div>
+
+<details><summary>Kaip skaičiuojama</summary>
+<p>Pagal EN 12150-1: 50×50 mm zona su mažiausiu skeveldrų skaičiumi, ne arčiau kaip 25 mm nuo kraštų ir 100 mm nuo smūgio taško. Skaičiuojama 3–5 min. po sudaužymo. Skeveldros, kertančios kvadrato kraštą, skaičiuojamos kaip ½. Minimumai: 3 mm – 15; 4–12 mm – 40; 15–19 mm – 30. Prieš naudodami palyginkite su savo standarto kopija.</p>
+<p>Automatinis skaičiavimas ieško įtrūkimų linijų ir skaičiuoja tarp jų esančias sritis, todėl rezultatas yra apytikslis. Prieš saugodami peržiūrėkite taškus ir pataisykite. Geriausiai veikia, kai stiklas fotografuojamas iš viršaus ant tamsaus fono su šviesa iš šono.</p>
+</details>
+</div>
+
+<script>
+{
+const $=id=>document.getElementById(id);
+addEventListener('error',ev=>{const m=document.getElementById('msg');if(m)m.textContent='Klaida: '+ev.message});
+const cv=$('cv'),ctx=cv.getContext('2d');
+const MIN={3:15,4:40,5:40,6:40,8:40,10:40,12:40,15:30,19:30};
+const S={img:null,roi:null,mode:'none',marks:[],edge:null,cal:[],tap:1,showEdge:true,pxmm:null,undo:[],stream:null,video:null,liveT:0,liveRes:null};
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const fmt=n=>Number.isInteger(n)?String(n):n.toFixed(1).replace('.',',');
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* empty-state picture: jittered fragment grid */
+{let s='',seed=7;const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;const n=8,P=[];for(let y=0;y<=n;y++){P[y]=[];for(let x=0;x<=n;x++){const e=x==0||y==0||x==n||y==n;P[y][x]=[x*25+(e?0:(rnd()-.5)*16),y*25+(e?0:(rnd()-.5)*16)]}}
+for(let y=0;y<n;y++)for(let x=0;x<n;x++){const q=[P[y][x],P[y][x+1],P[y+1][x+1],P[y+1][x]];s+=`<polygon points="${q.map(p=>p.join(',')).join(' ')}" fill="rgba(160,215,220,${(.12+rnd()*.2).toFixed(2)})" stroke="#e8f4f5" stroke-width="1.2"/>`}
+s+='<rect x="50" y="50" width="100" height="100" fill="none" stroke="#ffc400" stroke-width="4"/>';$('glass').innerHTML=s}
+
+$('th').innerHTML=Object.keys(MIN).map(k=>`<option value="${k}"${k==='4'?' selected':''}>${k} mm</option>`).join('');
+
+function setMode(m){S.mode=m;document.body.dataset.m=m;document.body.classList.toggle('livemode',m==='live');if(m==='count'&&!S.marks.length)auto();draw();upd()}
+
+/* ---------- image analysis ---------- */
+function boxBlur(a,W,H,R){const W1=W+1,I=new Float64Array(W1*(H+1));for(let y=0;y<H;y++){let s=0;for(let x=0;x<W;x++){s+=a[y*W+x];I[(y+1)*W1+x+1]=I[y*W1+x+1]+s}}
+const o=new Float32Array(W*H);for(let y=0;y<H;y++){const y0=Math.max(0,y-R),y1=Math.min(H,y+R+1);for(let x=0;x<W;x++){const x0=Math.max(0,x-R),x1=Math.min(W,x+R+1);o[y*W+x]=(I[y1*W1+x1]-I[y0*W1+x1]-I[y1*W1+x0]+I[y0*W1+x0])/((y1-y0)*(x1-x0))}}return o}
+
+function analyze(src,SW,SH,r,N,wantEdge){
+  const f=N/r.s,m=r.s*.25;
+  const ex=Math.max(0,r.x-m),ey=Math.max(0,r.y-m),ex2=Math.min(SW,r.x+r.s+m),ey2=Math.min(SH,r.y+r.s+m);
+  const W=Math.max(2,Math.round((ex2-ex)*f)),H=Math.max(2,Math.round((ey2-ey)*f));
+  const c=document.createElement('canvas');c.width=W;c.height=H;const g=c.getContext('2d',{willReadFrequently:true});
+  g.drawImage(src,ex,ey,ex2-ex,ey2-ey,0,0,W,H);const D=g.getImageData(0,0,W,H).data,n=W*H,gr=new Float32Array(n);
+  for(let i=0;i<n;i++)gr[i]=D[i*4]*.299+D[i*4+1]*.587+D[i*4+2]*.114;
+  const pm=N/50,pol=$('pol').value,minMm=+$('fmin').value;
+  const sm=boxBlur(gr,W,H,1),bg=boxBlur(gr,W,H,Math.max(3,Math.round(pm*1.5))),hist=new Uint32Array(256),df=new Uint8Array(n);
+  for(let i=0;i<n;i++){let v=pol==='b'?sm[i]-bg[i]:pol==='d'?bg[i]-sm[i]:Math.abs(sm[i]-bg[i]);v=Math.min(255,Math.max(0,v)*4)|0;df[i]=v;hist[v]++}
+  const P=+$('sens').value/100;let acc=0,t=255;for(;t>1;t--){acc+=hist[t];if(acc>=P*n)break}
+  const E=new Uint8Array(n);for(let i=0;i<n;i++)E[i]=df[i]>=t?1:0;
+  /* drop small specks (reflections, dust); cracks are long connected lines */
+  const E0=E.slice(),st=new Int32Array(n),seen=new Uint8Array(n),minSp=Math.max(5,pm*pm*.5),buf=new Int32Array(n);
+  for(let s0=0;s0<n;s0++){if(!E[s0]||seen[s0])continue;let sp=0,k=0;st[sp++]=s0;seen[s0]=1;
+    while(sp){const i=st[--sp];buf[k++]=i;const x=i%W,y=(i/W)|0;
+      for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;const xx=x+dx,yy=y+dy;if(xx<0||yy<0||xx>=W||yy>=H)continue;const j=yy*W+xx;if(E[j]&&!seen[j]){seen[j]=1;st[sp++]=j}}}
+    if(k<minSp)for(let q=0;q<k;q++)E[buf[q]]=0}
+  let cov=0;for(let i=0;i<n;i++)cov+=E[i];if(cov<n*P*.35){E.set(E0);cov=0;for(let i=0;i<n;i++)cov+=E[i]}S.cov=cov/n;
+  /* chamfer distance to nearest crack */
+  const BIG=1e6,dt=new Float32Array(n);for(let i=0;i<n;i++)dt[i]=E[i]?0:BIG;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){const i=y*W+x;let v=dt[i];if(!v)continue;if(x>0)v=Math.min(v,dt[i-1]+1);if(y>0){v=Math.min(v,dt[i-W]+1);if(x>0)v=Math.min(v,dt[i-W-1]+1.414);if(x<W-1)v=Math.min(v,dt[i-W+1]+1.414)}dt[i]=v}
+  for(let y=H-1;y>=0;y--)for(let x=W-1;x>=0;x--){const i=y*W+x;let v=dt[i];if(!v)continue;if(x<W-1)v=Math.min(v,dt[i+1]+1);if(y<H-1){v=Math.min(v,dt[i+W]+1);if(x<W-1)v=Math.min(v,dt[i+W+1]+1.414);if(x>0)v=Math.min(v,dt[i+W-1]+1.414)}dt[i]=v}
+  const cap=pm*minMm*1.5;for(let i=0;i<n;i++)if(dt[i]>cap)dt[i]=cap;
+  const ds=boxBlur(dt,W,H,1);
+  /* local maxima of distance = fragment centres */
+  const R=Math.max(2,Math.round(minMm*pm*.5)),dmin=minMm*pm*.25,mx=new Float32Array(n),my=new Float32Array(n);
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){let v=0;for(let k=Math.max(0,x-R);k<=Math.min(W-1,x+R);k++)v=Math.max(v,ds[y*W+k]);mx[y*W+x]=v}
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){let v=0;for(let k=Math.max(0,y-R);k<=Math.min(H-1,y+R);k++)v=Math.max(v,mx[k*W+x]);my[y*W+x]=v}
+  const rx0=(r.x-ex)*f,ry0=(r.y-ey)*f,rx1=rx0+N,ry1=ry0+N,cand=[];
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){const i=y*W+x,v=ds[i];if(v>=dmin&&v>=my[i]&&!E[i])cand.push([v,x,y])}
+  cand.sort((a,b)=>b[0]-a[0]);const acc2=[],out=[];
+  for(const[v,x,y]of cand){let ok=true;for(const[ax,ay,av]of acc2){const d=Math.hypot(ax-x,ay-y);if(d<R*2||d<Math.min(av,v)*.9){ok=false;break}}if(!ok)continue;acc2.push([x,y,v]);
+    const inside=x>=rx0&&x<rx1&&y>=ry0&&y<ry1;let w=0;
+    if(inside){const db=Math.min(x-rx0,rx1-x,y-ry0,ry1-y);w=db<v*.8?.5:1}else{const ox=Math.max(rx0-x,0,x-rx1),oy=Math.max(ry0-y,0,y-ry1);if(Math.hypot(ox,oy)<v*.6)w=.5}
+    if(w)out.push({x:ex+x/f,y:ey+y/f,w})}
+  let edge=null;if(wantEdge){const o=g.createImageData(W,H);for(let i=0;i<n;i++)if(E[i]){o.data[i*4]=255;o.data[i*4+1]=40;o.data[i*4+2]=60;o.data[i*4+3]=200}g.putImageData(o,0,0);edge={c,x:ex,y:ey,w:ex2-ex,h:ey2-ey}}
+  return{marks:out,edge}}
+
+function auto(){if(!S.img)return;pushUndo();const r=analyze(S.img,S.img.width,S.img.height,S.roi,360,true);S.marks=r.marks;S.edge=r.edge;upd()}
+
+/* ---------- drawing ---------- */
+function view(){if(S.mode==='count'){const m=S.roi.s*.15;return{x:S.roi.x-m,y:S.roi.y-m,w:S.roi.s+2*m,h:S.roi.s+2*m}}const I=S.mode==='live'?{width:S.video.videoWidth,height:S.video.videoHeight}:S.img;return{x:0,y:0,w:I.width,h:I.height}}
+function size(v){const box=$('stage'),maxH=innerHeight*.66;let w=box.clientWidth,h=w*v.h/v.w;if(h>maxH){h=maxH;w=h*v.w/v.h}w=Math.round(w);h=Math.round(h);const d=devicePixelRatio||1;if(cv.style.width!==w+'px'){cv.style.width=w+'px';cv.style.height=h+'px'}const W=Math.round(w*d),H=Math.round(h*d);if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H}return d}
+function frame(r,px,handle){ctx.fillStyle='rgba(0,0,0,.45)';ctx.beginPath();ctx.rect(-1e5,-1e5,2e5,2e5);ctx.rect(r.x,r.y,r.s,r.s);ctx.fill('evenodd');ctx.lineWidth=3*px;ctx.strokeStyle='#ffc400';ctx.strokeRect(r.x,r.y,r.s,r.s);if(handle){const hs=13*px;ctx.fillStyle='#ffc400';ctx.fillRect(r.x+r.s-hs,r.y+r.s-hs,hs*2,hs*2)}}
+function dots(ms,px){for(const m of ms){ctx.beginPath();ctx.arc(m.x,m.y,(m.w===1?7:6)*px,0,7);ctx.fillStyle=m.w===1?'#00c27a':'#ffc400';ctx.fill();ctx.lineWidth=1.5*px;ctx.strokeStyle='#000';ctx.stroke()}}
+function draw(){
+  if(S.mode==='live'){if(!S.video||!S.video.videoWidth)return;const v=view(),d=size(v),s=cv.width/v.w,px=d/s;ctx.setTransform(s,0,0,s,0,0);ctx.drawImage(S.video,0,0);const r=liveRoi();frame(r,px,false);if(S.liveRes)dots(S.liveRes,px);return}
+  if(!S.img)return;const v=view(),d=size(v),s=cv.width/v.w,px=d/s;
+  ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle='#000';ctx.fillRect(0,0,cv.width,cv.height);ctx.setTransform(s,0,0,s,-v.x*s,-v.y*s);ctx.drawImage(S.img,0,0);
+  if(S.mode==='count'&&S.edge&&S.showEdge){ctx.globalAlpha=.5;ctx.drawImage(S.edge.c,S.edge.x,S.edge.y,S.edge.w,S.edge.h);ctx.globalAlpha=1}
+  frame(S.roi,px,S.mode==='roi');
+  if(S.mode==='count')dots(S.marks,px);
+  if(S.mode==='cal'){ctx.strokeStyle='#ffc400';ctx.fillStyle='#ffc400';ctx.lineWidth=3*px;if(S.cal.length===2){ctx.beginPath();ctx.moveTo(S.cal[0].x,S.cal[0].y);ctx.lineTo(S.cal[1].x,S.cal[1].y);ctx.stroke()}for(const p of S.cal){ctx.beginPath();ctx.arc(p.x,p.y,8*px,0,7);ctx.fill()}}
+}
+
+/* ---------- live camera ---------- */
+function liveRoi(){const W=S.video.videoWidth,H=S.video.videoHeight,s=Math.min(W,H)*$('fsize').value/100;return{x:(W-s)/2,y:(H-s)/2,s}}
+function liveLoop(ts){if(S.mode!=='live')return;draw();if(ts-S.liveT>450&&S.video.videoWidth){S.liveT=ts;const r=analyze(S.video,S.video.videoWidth,S.video.videoHeight,liveRoi(),240,false);S.liveRes=r.marks;const n=r.marks.reduce((a,m)=>a+m.w,0);$('liveN').textContent='≈ '+fmt(n);showRes(n)}requestAnimationFrame(liveLoop)}
+async function startCam(){$('msg').textContent='';try{if(!navigator.mediaDevices?.getUserMedia)throw 0;const st=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});S.stream=st;const v=S.video||document.createElement('video');v.playsInline=true;v.muted=true;v.srcObject=st;S.video=v;await v.play();document.body.classList.add('has');S.liveRes=null;setMode('live');requestAnimationFrame(liveLoop)}
+  catch(e){$('msg').textContent='Tiesioginė kamera čia neleidžiama. Naudokite mygtuką „Nuotrauka“ arba atsidarykite failą tiesiai telefono naršyklėje (žr. pastabą pokalbyje).'}}
+function stopCam(){if(S.stream){S.stream.getTracks().forEach(t=>t.stop());S.stream=null}}
+$('bCam').onclick=startCam;
+$('bStop').onclick=()=>{stopCam();if(S.img)setMode('roi');else{document.body.classList.remove('has');setMode('none')}};
+$('bShot').onclick=()=>{const v=S.video;if(!v||!v.videoWidth)return;const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);S.roi=liveRoi();S.img=c;S.marks=[];S.edge=null;S.undo=[];stopCam();setMode('count')};
+$('fsize').oninput=()=>draw();
+
+/* ---------- photo input ---------- */
+function loadFile(e){const f=e.target.files[0];if(!f){$('msg').textContent='Nuotrauka negauta. Pabandykite „Iš galerijos“.';return}$('msg').textContent='Įkeliama…';stopCam();const u=URL.createObjectURL(f),im=new Image();im.onerror=()=>{$('msg').textContent='Nepavyko atidaryti nuotraukos ('+(f.type||'nežinomas formatas')+'). Pabandykite JPG nuotrauką.'};im.onload=()=>{try{$('msg').textContent='';const k=Math.min(1,2400/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);c.getContext('2d').drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);S.img=c;
+  const s=S.pxmm?Math.min(50*S.pxmm*k,Math.min(c.width,c.height)*.95):Math.min(c.width,c.height)*.3;S.roi={x:(c.width-s)/2,y:(c.height-s)/2,s};S.marks=[];S.edge=null;S.cal=[];S.undo=[];document.body.classList.add('has');setMode('roi');$('stage').scrollIntoView({block:'start'})}catch(err){$('msg').textContent='Klaida: '+err.message}};im.src=u;e.target.value=''}
+$('file').onchange=loadFile;$('file2').onchange=loadFile;
+
+/* ---------- pointer ---------- */
+function pt(e){const b=cv.getBoundingClientRect(),v=view();return{x:v.x+(e.clientX-b.left)/b.width*v.w,y:v.y+(e.clientY-b.top)/b.height*v.h,u:v.w/b.width}}
+let drag=null;
+cv.addEventListener('pointerdown',e=>{if(!S.img||S.mode==='live')return;const p=pt(e),r=S.roi;cv.setPointerCapture(e.pointerId);let t='tap';if(S.mode==='roi')t=Math.hypot(p.x-(r.x+r.s),p.y-(r.y+r.s))<32*p.u?'size':'move';drag={t,p0:p,r0:{...r},cx:e.clientX,cy:e.clientY,moved:false};e.preventDefault()});
+cv.addEventListener('pointermove',e=>{if(!drag)return;if(Math.hypot(e.clientX-drag.cx,e.clientY-drag.cy)>6)drag.moved=true;if(drag.t==='tap'||!drag.moved)return;const p=pt(e),dx=p.x-drag.p0.x,dy=p.y-drag.p0.y,r=S.roi,I=S.img;
+  if(drag.t==='move'){r.x=clamp(drag.r0.x+dx,0,I.width-r.s);r.y=clamp(drag.r0.y+dy,0,I.height-r.s)}else r.s=clamp(drag.r0.s+Math.max(dx,dy),20,Math.min(I.width-r.x,I.height-r.y));S.marks=[];S.edge=null;draw()});
+cv.addEventListener('pointerup',e=>{if(!drag)return;const d=drag;drag=null;if(d.moved||d.t!=='tap')return;const p=pt(e);
+  if(S.mode==='count'){const R=16*p.u;let bi=-1,bd=R;S.marks.forEach((m,i)=>{const q=Math.hypot(m.x-p.x,m.y-p.y);if(q<bd){bd=q;bi=i}});pushUndo();if(bi>=0)S.marks.splice(bi,1);else S.marks.push({x:p.x,y:p.y,w:S.tap});upd()}
+  else if(S.mode==='cal'){if(S.cal.length>=2)S.cal=[];S.cal.push(p);draw()}});
+addEventListener('resize',()=>draw());
+
+/* ---------- controls ---------- */
+function pushUndo(){S.undo.push(S.marks.map(m=>({...m})));if(S.undo.length>50)S.undo.shift()}
+$('m1').onclick=()=>{S.tap=1;$('m1').classList.add('on');$('m5').classList.remove('on')};
+$('m5').onclick=()=>{S.tap=.5;$('m5').classList.add('on');$('m1').classList.remove('on')};
+$('bUndo').onclick=()=>{if(S.undo.length){S.marks=S.undo.pop();upd()}};
+$('bClr').onclick=()=>{pushUndo();S.marks=[];upd()};
+$('bEdge').onclick=()=>{S.showEdge=!S.showEdge;$('bEdge').classList.toggle('on',S.showEdge);draw()};
+$('bAuto').onclick=auto;for(const id of['sens','fmin','pol'])$(id).onchange=()=>{if(S.mode==='count')auto()};$('fmin').oninput=()=>$('fminv').textContent=$('fmin').value.replace('.',',')+' mm';
+$('bGo').onclick=()=>{S.marks=[];setMode('count')};
+$('bBack').onclick=()=>setMode('roi');
+$('bCal').onclick=()=>{S.cal=[];setMode('cal')};
+$('bCalX').onclick=()=>setMode('roi');
+$('bCalOk').onclick=()=>{const mm=parseFloat(String($('calmm').value).replace(',','.'));if(S.cal.length<2||!(mm>0)){$('msg').textContent='Pažymėkite du taškus ir įveskite atstumą.';return}$('msg').textContent='';const d=Math.hypot(S.cal[1].x-S.cal[0].x,S.cal[1].y-S.cal[0].y),pm=d/mm,r=S.roi,I=S.img,cx=r.x+r.s/2,cy=r.y+r.s/2,s=Math.min(50*pm,I.width,I.height);S.pxmm=pm;r.s=s;r.x=clamp(cx-s/2,0,I.width-s);r.y=clamp(cy-s/2,0,I.height-s);S.marks=[];setMode('roi')};
+$('th').onchange=upd;$('len').onchange=upd;
+
+function total(){return S.marks.reduce((a,m)=>a+m.w,0)}
+function showRes(n,full,half){const th=$('th').value,min=MIN[th],V=$('verd');$('num').textContent=n==null?'–':fmt(n);
+  $('det').textContent=`Min. ${min} (${th} mm)`+(full!=null?` · ${full} pilnos, ${half} kraštinės`:'')+(S.mode==='live'?' · tiesiogiai, apytiksliai':'')+(S.cov!=null&&S.mode==='count'?` · linijų ${Math.round(S.cov*100)}%`:'');
+  if(n==null||S.mode==='none'){V.className='wait';V.textContent='Laukiama'}else if(n<min){V.className='bad';V.textContent='Neatitinka'}else if(S.mode==='live'){V.className='wait';V.textContent='Atrodo gerai'}else if(!$('len').checked){V.className='wait';V.textContent='Patikrinkite ilgį'}else{V.className='ok';V.textContent='Atitinka'}}
+function upd(){if(S.mode==='live')return;if(S.mode==='count'||S.marks.length){const f=S.marks.filter(m=>m.w===1).length;showRes(total(),f,S.marks.length-f)}else showRes(null);draw()}
+
+/* ---------- history ---------- */
+const KEY='skeveldros-hist';let H=[];try{H=JSON.parse(localStorage.getItem(KEY)||'[]')}catch(e){H=[]}
+function saveH(){try{localStorage.setItem(KEY,JSON.stringify(H))}catch(e){}}
+function renderH(){$('hist').innerHTML=H.length?`<table class="stack"><thead><tr><th>Data</th><th>Užsakymas</th><th>Storis</th><th>Skeveldros</th><th>Rezultatas</th></tr></thead><tbody>${H.map(h=>`<tr><td>${esc(h.d)}</td><td>${esc(h.o||'–')}</td><td>${esc(h.th)} mm</td><td class="n">${esc(fmt(h.n))}</td><td class="tag ${h.ok?'ok':'bad'}">${h.ok?'Atitinka':'Neatitinka'}</td></tr>`).join('')}</tbody></table>`:'<p class="hint">Dar nėra išsaugotų bandymų.</p>'}
+$('bSave').onclick=()=>{if(!S.img||!S.marks.length){$('msg').textContent='Pirma užfiksuokite kadrą ir suskaičiuokite skeveldras.';return}$('msg').textContent='';const th=$('th').value,n=total(),d=new Date(),p=x=>String(x).padStart(2,'0');
+  H.unshift({d:`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`,o:$('ord').value.trim(),th,n,ok:n>=MIN[th]&&$('len').checked});H=H.slice(0,500);saveH();renderH();$('bSave').textContent='Išsaugota';setTimeout(()=>$('bSave').textContent='Išsaugoti rezultatą',1500)};
+$('bCopy').onclick=async()=>{const csv='Data;Užsakymas;Storis mm;Skeveldros;Rezultatas\n'+H.map(h=>[h.d,h.o,h.th,fmt(h.n),h.ok?'Atitinka':'Neatitinka'].map(x=>'"'+String(x).replace(/"/g,'""')+'"').join(';')).join('\n');try{await navigator.clipboard.writeText(csv);$('bCopy').textContent='Nukopijuota'}catch(e){$('bCopy').textContent='Nepavyko'}setTimeout(()=>$('bCopy').textContent='Kopijuoti CSV',1500)};
+let delArm=0;$('bDel').onclick=()=>{if(!delArm){delArm=1;$('bDel').textContent='Tikrai ištrinti?';setTimeout(()=>{delArm=0;$('bDel').textContent='Ištrinti istoriją'},3000);return}H=[];saveH();renderH();delArm=0;$('bDel').textContent='Ištrinti istoriją'};
+renderH();upd();
+}
+</script>
+</body>
+</html>
