@@ -269,7 +269,10 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
                 val s = Session(this)
                 try {
                     val configs = s.getSupportedCameraConfigs(CameraConfigFilter(s))
-                    configs.maxByOrNull { it.imageSize.width * it.imageSize.height }?.let { s.cameraConfig = it }
+                    val def = s.cameraConfig
+                    configs.filter { it.cameraId == def.cameraId && it.textureSize == def.textureSize && it.fpsRange == def.fpsRange }
+                        .maxByOrNull { it.imageSize.width * it.imageSize.height }
+                        ?.takeIf { it.imageSize != def.imageSize }?.let { s.cameraConfig = it }
                 } catch (_: Exception) {}
                 val cfg = Config(s)
                 cfg.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
